@@ -30053,28 +30053,37 @@ if (!function_exists('mylottoexpertBuildEvidenceReadinessStatus')) {
         $repeatabilityLimited = ($repeatableSignals < 2 || $bestDraws < 5 || $weakRatio >= 0.35);
 
         $insufficientHistory = ($outcomeCount <= 0);
-        $score = $insufficientHistory ? 0 : max(0, min(100, $rawScore));
+        $readinessScore = $insufficientHistory ? 0 : max(0, min(100, $rawScore));
+        $score = $insufficientHistory ? 0.0 : round($onePlusRate * 100.0, 2);
+        $scoreConfidenceLabel = 'Building confidence';
+        if ($insufficientHistory) {
+            $scoreConfidenceLabel = 'Insufficient history';
+        } elseif ($score >= 75.0) {
+            $scoreConfidenceLabel = 'Strong confidence';
+        } elseif ($score >= 50.0) {
+            $scoreConfidenceLabel = 'Moderate confidence';
+        }
 
         $key = 'discovery_needed';
         $label = 'Discovery Needed';
         $plain = 'The prediction history map is not strong enough to support narrowing. LottoExpert should explore before it concentrates.';
         $next = 'Run or complete scored AI batches that cover the lower, middle, and upper points of the tested blend and history-window corridors.';
-        if ($pending > 0 && $score < 65) {
+        if ($pending > 0 && $readinessScore < 65) {
             $key = 'broad_testing_active';
             $label = 'Broad Testing Active';
             $plain = 'Saved runs are waiting for official scoring, so the prediction history map is still being updated.';
             $next = 'Wait for the official draw, then score the pending saved runs before trusting any narrower read.';
-        } elseif ($score >= 90 && $cap >= 90 && !empty($blend['complete']) && !empty($hist['complete']) && $draws >= 75 && $scored >= 450 && $outcomeDrawCount >= 75 && $outcomeCount >= 450 && $repeatableSignals >= 5 && $weakRatio < 0.20 && $avgHits >= 3.25 && $threePlusRate >= 0.25 && $zeroRate < 0.15 && $baselineAvailable && $baselineZ !== null && $baselineZ >= 3.0 && $baselineLiftPct !== null && $baselineLiftPct >= 20.0) {
+        } elseif ($readinessScore >= 90 && $cap >= 90 && !empty($blend['complete']) && !empty($hist['complete']) && $draws >= 75 && $scored >= 450 && $outcomeDrawCount >= 75 && $outcomeCount >= 450 && $repeatableSignals >= 5 && $weakRatio < 0.20 && $avgHits >= 3.25 && $threePlusRate >= 0.25 && $zeroRate < 0.15 && $baselineAvailable && $baselineZ !== null && $baselineZ >= 3.0 && $baselineLiftPct !== null && $baselineLiftPct >= 20.0) {
             $key = 'locked_candidate';
             $label = 'Locked Candidate';
             $plain = 'The prediction history score is high after strict caps, full coverage is present, actual scored outcomes are strong, and repeated signals support the current range. This is still a candidate, not a guarantee.';
             $next = 'Keep the strongest setup stable and validate it against future completed draws.';
-        } elseif ($score >= 70 && $cap >= 70 && !empty($blend['complete']) && !empty($hist['complete']) && $draws >= 50 && $scored >= 225 && $outcomeDrawCount >= 50 && $outcomeCount >= 225 && $avgHits >= 2.5 && $threePlusRate >= 0.15 && $zeroRate < 0.25 && $baselineAvailable && $baselineZ !== null && $baselineZ >= 2.0 && $baselineLiftPct !== null && $baselineLiftPct >= 10.0) {
+        } elseif ($readinessScore >= 70 && $cap >= 70 && !empty($blend['complete']) && !empty($hist['complete']) && $draws >= 50 && $scored >= 225 && $outcomeDrawCount >= 50 && $outcomeCount >= 225 && $avgHits >= 2.5 && $threePlusRate >= 0.15 && $zeroRate < 0.25 && $baselineAvailable && $baselineZ !== null && $baselineZ >= 2.0 && $baselineLiftPct !== null && $baselineLiftPct >= 10.0) {
             $key = 'precision_range_active';
             $label = 'Precision Range Active';
             $plain = 'The prediction history map is complete enough and actual scored outcomes are strong enough to justify focused precision testing.';
             $next = 'Continue precision testing inside the strongest range while scoring every completed draw.';
-        } elseif ($score >= 45 || ($repeatableSignals > 0 && ($scored > 0 || $draws > 0))) {
+        } elseif ($readinessScore >= 45 || ($repeatableSignals > 0 && ($scored > 0 || $draws > 0))) {
             $key = 'early_signal_found';
             $label = 'Early Signal Found';
             $plain = 'A direction is forming, but the prediction history is capped until coverage, edge testing, validation, and real hit performance improve.';
@@ -30105,7 +30114,7 @@ if (!function_exists('mylottoexpertBuildEvidenceReadinessStatus')) {
             }
         }
 
-        $scoreLine = 'Prediction History-readiness score: ' . number_format($score) . '/100 after strict caps using independent draw-level main-number validation against the random baseline. Raw score before caps: ' . number_format($rawScore) . '/100. ' . $baselineDescription;
+        $scoreLine = 'Scientific Prediction History Score: ' . number_format($score, 2) . '% based on evaluated prediction rows with at least one main-number hit for this lottery/game/type card context. ' . $baselineDescription;
         $componentLine = 'Components: coverage ' . $coverageComponent . '/25, sample ' . $sampleComponent . '/15, effect/performance proxy ' . $effectComponent . '/20, repeatability ' . $repeatComponent . '/15, stability ' . $stabilityComponent . '/15, validation proxy ' . $validationComponent . '/10.';
         $capLine = empty($capReasons) ? 'No major cap is currently limiting the status.' : implode(' ', array_unique($capReasons));
         $hiveLine = $scored > 0 ? ('Shared AI Learning history: ' . number_format($scored) . ' scored AI setting row' . ($scored === 1 ? '' : 's') . ' across ' . number_format($draws) . ' completed draw' . ($draws === 1 ? '' : 's') . ($users > 0 ? (' and ' . number_format($users) . ' user' . ($users === 1 ? '' : 's')) : '') . '. Outcome validation: ' . number_format($outcomeCount) . ' scored prediction' . ($outcomeCount === 1 ? '' : 's') . ' across ' . number_format($outcomeDrawCount) . ' independent draw date' . ($outcomeDrawCount === 1 ? '' : 's') . ', draw-level avg main hits ' . number_format($avgHits, 2) . ', row avg main hits ' . number_format($rowAvgHits, 2) . ', avg total hits ' . number_format($avgTotalHits, 2) . ', zero-main-hit rate ' . number_format($zeroRate * 100, 1) . '%, 3+ main-hit rate ' . number_format($threePlusRate * 100, 1) . '%.') : 'Shared AI Learning history: collecting scored AI prediction history for this lottery.';
@@ -30158,16 +30167,16 @@ if (!function_exists('mylottoexpertBuildEvidenceReadinessStatus')) {
             'next'=>$next,
             'hive_line'=>$hiveLine,
             'personal_line'=>$personal,
-            'coverage_score'=>$score,
+            'coverage_score'=>$readinessScore,
             'scientific_score'=>$score,
-            'raw_score'=>$rawScore,
+            'raw_score'=>$score,
             'cap'=>$cap,
             'score_percent'=>$score,
             'evidence_count'=>$outcomeCount,
             'evaluated_count'=>$outcomeDrawCount,
             'insufficient_history'=>$insufficientHistory,
             'fallback_used'=>false,
-            'confidence_label'=>$label,
+            'confidence_label'=>$scoreConfidenceLabel,
             'score_basis'=>($insufficientHistory ? 'insufficient_history' : 'evaluated_prediction_history'),
             'score_line'=>$scoreLine,
             'component_line'=>$componentLine,
@@ -38178,8 +38187,8 @@ if (!isset($__skaiPerfAllHistory) || !is_array($__skaiPerfAllHistory)) {
   $__advEvidenceValidationStage = htmlspecialchars((string)($__advEvidenceStatusRaw['validation_stage'] ?? ''), ENT_QUOTES, 'UTF-8');
   $__advEvidenceValidationStageDetail = htmlspecialchars((string)($__advEvidenceStatusRaw['validation_stage_detail'] ?? ''), ENT_QUOTES, 'UTF-8');
   $__advEvidenceCoverageScore = max(0, min(100, (int)($__advEvidenceStatusRaw['coverage_score'] ?? 0)));
-  $__advEvidenceScientificScore = max(0, min(100, (int)($__advEvidenceStatusRaw['score_percent'] ?? $__advEvidenceStatusRaw['scientific_score'] ?? $__advEvidenceCoverageScore)));
-  $__advEvidenceRawScore = max(0, min(100, (int)($__advEvidenceStatusRaw['raw_score'] ?? $__advEvidenceScientificScore)));
+  $__advEvidenceScientificScore = (float)($__advEvidenceStatusRaw['score_percent'] ?? $__advEvidenceStatusRaw['scientific_score'] ?? 0.0);
+  $__advEvidenceRawScore = (float)($__advEvidenceStatusRaw['raw_score'] ?? $__advEvidenceScientificScore);
   $__advEvidenceCap = max(0, min(100, (int)($__advEvidenceStatusRaw['cap'] ?? 100)));
   $__advEvidenceScoreLine = htmlspecialchars((string)($__advEvidenceStatusRaw['score_line'] ?? ''), ENT_QUOTES, 'UTF-8');
   $__advEvidenceComponentLine = htmlspecialchars((string)($__advEvidenceStatusRaw['component_line'] ?? ''), ENT_QUOTES, 'UTF-8');
@@ -38248,7 +38257,7 @@ if (!isset($__skaiPerfAllHistory) || !is_array($__skaiPerfAllHistory)) {
    * evidence, performance lift, repeatability, stability and actual range state.
    * It does not narrow a range; it explains confidence/readiness.
    */
-  $__mlePclScore = max(0, min(100, (int)$__advEvidenceScientificScore));
+  $__mlePclScore = (int)round((float)$__advEvidenceScientificScore);
   $__mlePclRawScore = max(0, min(100, (int)$__advEvidenceRawScore));
   $__mlePclCap = max(0, min(100, (int)$__advEvidenceCap));
   $__mlePclSavedRows = max(0, (int)$__advV94SavedScored);
@@ -41542,8 +41551,8 @@ if (!function_exists('mle_render_post_draw_result')) {
    * keeps it aligned with the coverage/validation audit below.
    */
   $__mleEliteEvidenceKey = (string)($__advEvidenceStatusKey ?? 'discovery_needed');
-  $__mleEliteEvidenceScoreNum = max(0, min(100, (int)($__advEvidenceScientificScore ?? 0)));
-  $__mleEliteEvidenceRawNum = max(0, min(100, (int)($__advEvidenceRawScore ?? $__mleEliteEvidenceScoreNum)));
+  $__mleEliteEvidenceScoreNum = (int)round((float)($__advEvidenceScientificScore ?? 0));
+  $__mleEliteEvidenceRawNum = (int)round((float)($__advEvidenceRawScore ?? $__mleEliteEvidenceScoreNum));
   $__mleEliteEvidenceCapNum = max(0, min(100, (int)($__advEvidenceCap ?? 100)));
   $__mleEliteEvidenceCapReasonRaw = trim((string)($__advEvidenceStatusRaw['cap_line'] ?? ''));
   $__mleEliteEvidenceStatusRawLabel = trim((string)($__advEvidenceStatusRaw['label'] ?? 'Discovery Needed'));
