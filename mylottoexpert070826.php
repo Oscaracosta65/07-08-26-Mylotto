@@ -29276,6 +29276,8 @@ if (!function_exists('mylottoexpertV99LoadCanonicalScoredSettingCoverage')) {
             return $out;
         }
         $gameId = trim((string)($card['target_game_id'] ?? $card['game_id'] ?? ''));
+        $lotteryId = (int)($card['lottery_id'] ?? $card['target_lottery_id'] ?? 0);
+        $predictionType = strtolower(trim((string)($card['target_prediction_type'] ?? $card['prediction_type'] ?? $card['target_prediction_family'] ?? $card['prediction_family'] ?? '')));
         if ($gameId === '') { return $out; }
         $out['game_id'] = $gameId;
         static $__mleV120OutcomeCache = array();
@@ -29284,6 +29286,7 @@ if (!function_exists('mylottoexpertV99LoadCanonicalScoredSettingCoverage')) {
         try { $colsRaw = $db->getTableColumns('#__user_saved_numbers', false); $cols = is_array($colsRaw) ? array_keys($colsRaw) : array(); } catch (\Throwable $e) { $cols = array(); }
         if (empty($cols) || (!in_array('target_game_id', $cols, true) && !in_array('game_id', $cols, true))) { return $out; }
         $has = static function($name) use ($cols) { return in_array((string)$name, $cols, true); };
+        if (!$has('evaluation_status') || !$has('evaluated_at') || !$has('actual_draw_date')) { return $out; }
         $table = $db->quoteName('#__user_saved_numbers');
         $gameWhereParts = array();
         if ($has('target_game_id')) { $gameWhereParts[] = 's.' . $db->quoteName('target_game_id') . ' = ' . $db->quote($gameId); }
@@ -29427,25 +29430,41 @@ if (!function_exists('mylottoexpertV107LoadCanonicalOutcomeValidationEvidence'))
         );
         if (!is_object($db)) { return $out; }
         $gameId = trim((string)($card['target_game_id'] ?? $card['game_id'] ?? ''));
+        $lotteryId = (int)($card['lottery_id'] ?? $card['target_lottery_id'] ?? 0);
+        $predictionType = strtolower(trim((string)($card['target_prediction_type'] ?? $card['prediction_type'] ?? $card['target_prediction_family'] ?? $card['prediction_family'] ?? '')));
         if ($gameId === '') { return $out; }
         $out['game_id'] = $gameId;
         static $__mleV184OutcomeCache = array();
-        $__mleV184CacheKey = (string)$gameId;
+        $__mleV184CacheKey = (string)$lotteryId . '|' . (string)$gameId . '|' . (string)$predictionType;
         if (isset($__mleV184OutcomeCache[$__mleV184CacheKey]) && is_array($__mleV184OutcomeCache[$__mleV184CacheKey])) { return $__mleV184OutcomeCache[$__mleV184CacheKey]; }
         try { $colsRaw = $db->getTableColumns('#__user_saved_numbers', false); $cols = is_array($colsRaw) ? array_keys($colsRaw) : array(); } catch (\Throwable $e) { $cols = array(); }
         if (empty($cols) || (!in_array('target_game_id', $cols, true) && !in_array('game_id', $cols, true))) { return $out; }
         $has = static function($name) use ($cols) { return in_array((string)$name, $cols, true); };
+        if (!$has('evaluation_status') || !$has('evaluated_at') || !$has('actual_draw_date')) { return $out; }
         $table = $db->quoteName('#__user_saved_numbers');
-        $gameExprParts = array();
-        if ($has('target_game_id')) { $gameExprParts[] = "NULLIF(s." . $db->quoteName('target_game_id') . ",'')"; }
-        if ($has('game_id')) { $gameExprParts[] = "NULLIF(s." . $db->quoteName('game_id') . ",'')"; }
-        $gameExpr = 'TRIM(COALESCE(' . implode(',', $gameExprParts) . ",''))";
-        $gameWhere = $gameExpr . ' = ' . $db->quote($gameId);
+        $gameWhereParts = array();
+        if ($has('target_game_id')) { $gameWhereParts[] = "TRIM(COALESCE(s." . $db->quoteName('target_game_id') . ",'')) = " . $db->quote($gameId); }
+        if ($has('game_id')) { $gameWhereParts[] = "TRIM(COALESCE(s." . $db->quoteName('game_id') . ",'')) = " . $db->quote($gameId); }
+        $gameWhere = '(' . implode(' OR ', $gameWhereParts) . ')';
+        $lotteryWhere = '1=1';
+        if ($lotteryId > 0) {
+            $lotteryWhereParts = array();
+            if ($has('target_lottery_id')) { $lotteryWhereParts[] = 'COALESCE(s.' . $db->quoteName('target_lottery_id') . ',0) = ' . (int)$lotteryId; }
+            if ($has('lottery_id')) { $lotteryWhereParts[] = 'COALESCE(s.' . $db->quoteName('lottery_id') . ',0) = ' . (int)$lotteryId; }
+            if (!empty($lotteryWhereParts)) { $lotteryWhere = '(' . implode(' OR ', $lotteryWhereParts) . ')'; }
+        }
+        $predictionTypeWhere = '1=1';
+        if ($predictionType !== '') {
+            $predictionTypeParts = array();
+            if ($has('target_prediction_type')) { $predictionTypeParts[] = "LOWER(TRIM(COALESCE(s." . $db->quoteName('target_prediction_type') . ",''))) = " . $db->quote($predictionType); }
+            if ($has('prediction_type')) { $predictionTypeParts[] = "LOWER(TRIM(COALESCE(s." . $db->quoteName('prediction_type') . ",''))) = " . $db->quote($predictionType); }
+            if (!empty($predictionTypeParts)) { $predictionTypeWhere = '(' . implode(' OR ', $predictionTypeParts) . ')'; }
+        }
         $statusExpr = $has('evaluation_status') ? "LOWER(TRIM(COALESCE(s." . $db->quoteName('evaluation_status') . ",'')))" : "''";
         $scoredParts = array($statusExpr . " IN ('scored','evaluated','completed','saved_scored')");
         if ($has('evaluated_at')) { $scoredParts[] = "s." . $db->quoteName('evaluated_at') . " IS NOT NULL"; }
         if ($has('actual_draw_date')) { $scoredParts[] = "(s." . $db->quoteName('actual_draw_date') . " IS NOT NULL AND s." . $db->quoteName('actual_draw_date') . " <> '0000-00-00')"; }
-        $scoredCond = '(' . implode(' OR ', $scoredParts) . ')';
+        $scoredCond = '(' . implode(' AND ', $scoredParts) . ')';
         $select = array('s.' . $db->quoteName('id') . ' AS id');
         $wanted = array(
             'main_hits_count','main_hits','matched_count','hit_count','extra_hits_count','extra_hits','bonus_hits_count','bonus_hits','total_hits','total_hits_count',
@@ -29472,7 +29491,7 @@ if (!function_exists('mylottoexpertV107LoadCanonicalOutcomeValidationEvidence'))
             }
         }
         $order = 's.' . $db->quoteName('id') . ' DESC';
-        $sql = 'SELECT ' . implode(', ', $select) . ' FROM ' . $table . ' s' . $join . ' WHERE ' . $gameWhere . ' AND ' . $scoredCond . ' ORDER BY ' . $order;
+        $sql = 'SELECT ' . implode(', ', $select) . ' FROM ' . $table . ' s' . $join . ' WHERE ' . $gameWhere . ' AND ' . $lotteryWhere . ' AND ' . $predictionTypeWhere . ' AND ' . $scoredCond . ' ORDER BY ' . $order;
         try { $db->setQuery($sql, 0, 900); $rows = $db->loadAssocList(); } catch (\Throwable $e) { return $out; }
         if (empty($rows)) { $__mleV184OutcomeCache[$__mleV184CacheKey] = $out; return $out; }
 
@@ -30033,155 +30052,8 @@ if (!function_exists('mylottoexpertBuildEvidenceReadinessStatus')) {
         $performanceBelowTrustFloor = ($avgHits < 2.5 || ($threePlusRate < 0.05 && $outcomeCount >= 45) || $zeroRate >= 0.25 || $recentIsWeak);
         $repeatabilityLimited = ($repeatableSignals < 2 || $bestDraws < 5 || $weakRatio >= 0.35);
 
-        if (empty($blend['complete']) || empty($hist['complete'])) {
-            $cap = min($cap, 39);
-            $capReasons[] = 'Scored blend/history corridor coverage is incomplete.';
-        }
-        if (empty($blend['edges_complete']) || empty($hist['edges_complete'])) {
-            $cap = min($cap, 44);
-            $capReasons[] = 'One or more lower/upper tested corridor areas have not been scored.';
-        }
-
-        if ($scored < 27 || $draws < 6) {
-            $cap = min($cap, 44);
-            $capReasons[] = 'Fewer than 27 mapped AI setting rows or 6 mapper draw dates are available.';
-        } elseif ($scored < 54 || $draws < 10) {
-            $cap = min($cap, 54);
-            $capReasons[] = 'Fewer than 54 mapped AI setting rows or 10 mapper draw dates are available.';
-        } elseif ($scored < 90 || $draws < 15) {
-            $cap = min($cap, 64);
-            $capReasons[] = 'Fewer than 90 mapped AI setting rows or 15 mapper draw dates are available.';
-        } elseif ($scored < 150 || $draws < 24) {
-            $cap = min($cap, 74);
-            $capReasons[] = 'Fewer than 150 mapped AI setting rows or 24 mapper draw dates are available.';
-        } elseif ($scored < 225 || $draws < 36) {
-            $cap = min($cap, 84);
-            $capReasons[] = 'Fewer than 225 mapped AI setting rows or 36 mapper draw dates are available.';
-        }
-
-        if ($outcomeCount < 27) {
-            $cap = min($cap, 34);
-            $capReasons[] = 'Fewer than 27 scored prediction outcomes are available for performance validation.';
-        } elseif ($outcomeCount < 54) {
-            $cap = min($cap, 44);
-            $capReasons[] = 'Fewer than 54 scored prediction outcomes are available for performance validation.';
-        } elseif ($outcomeCount < 108) {
-            $cap = min($cap, 54);
-            $capReasons[] = 'Fewer than 108 scored prediction outcomes are available for performance validation.';
-        } elseif ($outcomeCount < 225) {
-            $cap = min($cap, 64);
-            $capReasons[] = 'Fewer than 225 scored prediction outcomes are available for high-trust validation.';
-        }
-        if ($outcomeDrawCount < 10) {
-            $cap = min($cap, 34);
-            $capReasons[] = 'Fewer than 10 independent completed draw dates are available.';
-        } elseif ($outcomeDrawCount < 20) {
-            $cap = min($cap, 44);
-            $capReasons[] = 'Fewer than 20 independent completed draw dates are available.';
-        } elseif ($outcomeDrawCount < 35) {
-            $cap = min($cap, 54);
-            $capReasons[] = 'Fewer than 35 independent completed draw dates are available.';
-        } elseif ($outcomeDrawCount < 50) {
-            $cap = min($cap, 64);
-            $capReasons[] = 'Fewer than 50 independent completed draw dates are available.';
-        } elseif ($outcomeDrawCount < 75) {
-            $cap = min($cap, 74);
-            $capReasons[] = 'Fewer than 75 independent completed draw dates are available for elite confidence.';
-        }
-
-        if (!$baselineAvailable) {
-            $cap = min($cap, 49);
-            $capReasons[] = 'A lottery-specific random baseline is not available, so the score cannot be defended as statistical prediction history.';
-        } elseif ($baselineLiftPct !== null && $baselineLiftPct <= 0) {
-            $cap = min($cap, 39);
-            $capReasons[] = 'Draw-level average main hits do not beat the random baseline.';
-        } elseif ($baselineZ !== null && $baselineZ < 1.00) {
-            $cap = min($cap, 49);
-            $capReasons[] = 'Baseline lift is not statistically meaningful yet; z-score is below 1.00.';
-        } elseif ($baselineZ !== null && $baselineZ < 1.65) {
-            $cap = min($cap, 59);
-            $capReasons[] = 'Baseline lift is below the minimum one-sided statistical screen for precision trust.';
-        } elseif ($baselineZ !== null && $baselineZ < 2.00) {
-            $cap = min($cap, 69);
-            $capReasons[] = 'Baseline lift has not yet reached the stricter z >= 2.00 screen.';
-        } elseif ($baselineZ !== null && $baselineZ < 3.00) {
-            $cap = min($cap, 84);
-            $capReasons[] = 'Baseline lift has not yet reached the elite z >= 3.00 screen.';
-        }
-        if ($baselineLiftPct !== null && $baselineLiftPct < 10.0) {
-            $cap = min($cap, 59);
-            $capReasons[] = 'Baseline lift is below +10%, which is too small for strong confidence.';
-        } elseif ($baselineLiftPct !== null && $baselineLiftPct < 20.0) {
-            $cap = min($cap, 74);
-            $capReasons[] = 'Baseline lift is below +20%, which is too small for elite confidence.';
-        }
-
-        if ($avgHits <= 0) {
-            $cap = min($cap, 24);
-            $capReasons[] = 'No main-number hit performance is available yet.';
-        } elseif ($avgHits < 1.0) {
-            $cap = min($cap, 29);
-            $capReasons[] = 'Average main-number hit performance is below 1.0 per scored prediction.';
-        } elseif ($avgHits < 1.5) {
-            $cap = min($cap, 39);
-            $capReasons[] = 'Average main-number hit performance is below 1.5 per scored prediction.';
-        } elseif ($avgHits < 2.0) {
-            $cap = min($cap, 49);
-            $capReasons[] = 'Average main-number hit performance is below 2.0 per scored prediction.';
-        } elseif ($avgHits < 2.5) {
-            $cap = min($cap, 59);
-            $capReasons[] = 'Average main-number hit performance is below 2.5 per scored prediction.';
-        } elseif ($avgHits < 3.0) {
-            $cap = min($cap, 69);
-            $capReasons[] = 'Average main-number hit performance is below 3.0 per scored prediction.';
-        }
-        if ($zeroRate >= 0.40) {
-            $cap = min($cap, 44);
-            $capReasons[] = 'Zero-main-hit outcomes are too frequent for high-trust classification.';
-        } elseif ($zeroRate >= 0.25) {
-            $cap = min($cap, 59);
-            $capReasons[] = 'Zero-main-hit outcomes are still too common for strong confidence.';
-        }
-        if ($threePlusRate < 0.05 && $outcomeCount >= 45) {
-            $cap = min($cap, 49);
-            $capReasons[] = 'Three-plus-main-hit outcomes have not repeated often enough for strong confidence.';
-        } elseif ($threePlusRate < 0.10 && $outcomeCount >= 90) {
-            $cap = min($cap, 59);
-            $capReasons[] = 'Three-plus-main-hit outcomes are below the minimum rate for precision confidence.';
-        } elseif ($threePlusRate < 0.20 && $outcomeCount >= 150) {
-            $cap = min($cap, 74);
-            $capReasons[] = 'Three-plus-main-hit outcomes are below the elite-confidence rate.';
-        }
-        if ($recentIsWeak) {
-            $cap = min($cap, 54);
-            $capReasons[] = 'Recent scored outcomes are materially weaker than the full-history average.';
-        }
-
-        if ($repeatableSignals < 1) {
-            $cap = min($cap, 44);
-            $capReasons[] = 'No repeatable promising/strong setting signal is available yet.';
-        } elseif ($repeatableSignals < 2) {
-            $cap = min($cap, 64);
-            $capReasons[] = 'Only one repeatable setting signal is available; high-trust status requires more independent support.';
-        }
-
-        if ($bestDraws < 5) {
-            $cap = min($cap, 54);
-            $capReasons[] = 'The strongest setting value has support across fewer than 5 draw dates.';
-        } elseif ($bestDraws < 10) {
-            $cap = min($cap, 64);
-            $capReasons[] = 'The strongest setting value has support across fewer than 10 draw dates.';
-        }
-
-        if ($weakRatio >= 0.50) {
-            $cap = min($cap, 54);
-            $capReasons[] = 'Weak or unstable signals make up at least half of the mapped setting prediction history.';
-        } elseif ($weakRatio >= 0.35) {
-            $cap = min($cap, 64);
-            $capReasons[] = 'Weak or unstable signals are too frequent for high-trust status.';
-        }
-
-        $score = max(0, min(100, min($rawScore, $cap)));
+        $insufficientHistory = ($outcomeCount <= 0);
+        $score = $insufficientHistory ? 0 : max(0, min(100, $rawScore));
 
         $key = 'discovery_needed';
         $label = 'Discovery Needed';
@@ -30290,6 +30162,13 @@ if (!function_exists('mylottoexpertBuildEvidenceReadinessStatus')) {
             'scientific_score'=>$score,
             'raw_score'=>$rawScore,
             'cap'=>$cap,
+            'score_percent'=>$score,
+            'evidence_count'=>$outcomeCount,
+            'evaluated_count'=>$outcomeDrawCount,
+            'insufficient_history'=>$insufficientHistory,
+            'fallback_used'=>false,
+            'confidence_label'=>$label,
+            'score_basis'=>($insufficientHistory ? 'insufficient_history' : 'evaluated_prediction_history'),
             'score_line'=>$scoreLine,
             'component_line'=>$componentLine,
             'cap_line'=>$capLine,
@@ -30350,6 +30229,8 @@ if (!function_exists('mylottoexpertV94LoadCanonicalSavedEvidenceTotals')) {
         );
         if (!is_object($db)) { return $out; }
         $gameId = trim((string)($card['target_game_id'] ?? $card['game_id'] ?? ''));
+        $lotteryId = (int)($card['lottery_id'] ?? $card['target_lottery_id'] ?? 0);
+        $predictionType = strtolower(trim((string)($card['target_prediction_type'] ?? $card['prediction_type'] ?? $card['target_prediction_family'] ?? $card['prediction_family'] ?? '')));
         if ($gameId === '') { return $out; }
         try {
             $colsRaw = $db->getTableColumns('#__user_saved_numbers', false);
@@ -30362,15 +30243,30 @@ if (!function_exists('mylottoexpertV94LoadCanonicalSavedEvidenceTotals')) {
         $q = array($db, 'quote');
         $table = $db->quoteName('#__user_saved_numbers');
         $has = static function($name) use ($cols) { return in_array((string)$name, $cols, true); };
+        if (!$has('evaluation_status') || !$has('evaluated_at') || !$has('actual_draw_date')) { return $out; }
         $gameWhereParts = array();
         if ($has('target_game_id')) { $gameWhereParts[] = "s." . $db->quoteName('target_game_id') . " = " . $db->quote($gameId); }
         if ($has('game_id')) { $gameWhereParts[] = "s." . $db->quoteName('game_id') . " = " . $db->quote($gameId); }
         $gameWhere = '(' . implode(' OR ', $gameWhereParts) . ')';
+        $lotteryWhere = '1=1';
+        if ($lotteryId > 0) {
+            $lotteryWhereParts = array();
+            if ($has('target_lottery_id')) { $lotteryWhereParts[] = 'COALESCE(s.' . $db->quoteName('target_lottery_id') . ',0) = ' . (int)$lotteryId; }
+            if ($has('lottery_id')) { $lotteryWhereParts[] = 'COALESCE(s.' . $db->quoteName('lottery_id') . ',0) = ' . (int)$lotteryId; }
+            if (!empty($lotteryWhereParts)) { $lotteryWhere = '(' . implode(' OR ', $lotteryWhereParts) . ')'; }
+        }
+        $predictionTypeWhere = '1=1';
+        if ($predictionType !== '') {
+            $predictionTypeParts = array();
+            if ($has('target_prediction_type')) { $predictionTypeParts[] = "LOWER(TRIM(COALESCE(s." . $db->quoteName('target_prediction_type') . ",''))) = " . $db->quote($predictionType); }
+            if ($has('prediction_type')) { $predictionTypeParts[] = "LOWER(TRIM(COALESCE(s." . $db->quoteName('prediction_type') . ",''))) = " . $db->quote($predictionType); }
+            if (!empty($predictionTypeParts)) { $predictionTypeWhere = '(' . implode(' OR ', $predictionTypeParts) . ')'; }
+        }
         $statusExpr = $has('evaluation_status') ? "LOWER(TRIM(COALESCE(s." . $db->quoteName('evaluation_status') . ",'')))" : "''";
         $scoredParts = array($statusExpr . " IN ('scored','evaluated','completed','saved_scored')");
         if ($has('evaluated_at')) { $scoredParts[] = "s." . $db->quoteName('evaluated_at') . " IS NOT NULL"; }
         if ($has('actual_draw_date')) { $scoredParts[] = "(s." . $db->quoteName('actual_draw_date') . " IS NOT NULL AND s." . $db->quoteName('actual_draw_date') . " <> '0000-00-00')"; }
-        $scoredCond = '(' . implode(' OR ', $scoredParts) . ')';
+        $scoredCond = '(' . implode(' AND ', $scoredParts) . ')';
         $dateCandidates = array();
         if ($has('target_draw_date')) { $dateCandidates[] = "NULLIF(DATE(s." . $db->quoteName('target_draw_date') . "),'0000-00-00')"; }
         if ($has('actual_draw_date')) { $dateCandidates[] = "NULLIF(DATE(s." . $db->quoteName('actual_draw_date') . "),'0000-00-00')"; }
@@ -30391,7 +30287,7 @@ if (!function_exists('mylottoexpertV94LoadCanonicalSavedEvidenceTotals')) {
              . "SUM(CASE WHEN " . $scoredCond . " AND " . $skaiCond . " THEN 1 ELSE 0 END) AS skai_scored_rows, "
              . $avgMainExpr . " AS avg_main_hits, "
              . $avgTotalExpr . " AS avg_total_hits "
-             . "FROM " . $table . " s WHERE " . $gameWhere;
+             . "FROM " . $table . " s WHERE " . $gameWhere . " AND " . $lotteryWhere . " AND " . $predictionTypeWhere;
         try {
             $db->setQuery($sql);
             $row = (array)$db->loadAssoc();
@@ -38282,7 +38178,7 @@ if (!isset($__skaiPerfAllHistory) || !is_array($__skaiPerfAllHistory)) {
   $__advEvidenceValidationStage = htmlspecialchars((string)($__advEvidenceStatusRaw['validation_stage'] ?? ''), ENT_QUOTES, 'UTF-8');
   $__advEvidenceValidationStageDetail = htmlspecialchars((string)($__advEvidenceStatusRaw['validation_stage_detail'] ?? ''), ENT_QUOTES, 'UTF-8');
   $__advEvidenceCoverageScore = max(0, min(100, (int)($__advEvidenceStatusRaw['coverage_score'] ?? 0)));
-  $__advEvidenceScientificScore = max(0, min(100, (int)($__advEvidenceStatusRaw['scientific_score'] ?? $__advEvidenceCoverageScore)));
+  $__advEvidenceScientificScore = max(0, min(100, (int)($__advEvidenceStatusRaw['score_percent'] ?? $__advEvidenceStatusRaw['scientific_score'] ?? $__advEvidenceCoverageScore)));
   $__advEvidenceRawScore = max(0, min(100, (int)($__advEvidenceStatusRaw['raw_score'] ?? $__advEvidenceScientificScore)));
   $__advEvidenceCap = max(0, min(100, (int)($__advEvidenceStatusRaw['cap'] ?? 100)));
   $__advEvidenceScoreLine = htmlspecialchars((string)($__advEvidenceStatusRaw['score_line'] ?? ''), ENT_QUOTES, 'UTF-8');
