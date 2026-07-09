@@ -23,7 +23,15 @@
  * 10. Logic: Bayesian skip smoothing formula (uses hits, not cases)
  */
 
-defined('_JEXEC') or define('_JEXEC', 1); // stub guard so file can run standalone
+// This script must only be run from the command line.
+// Running it in a web context could interfere with Joomla's _JEXEC guard.
+if (PHP_SAPI !== 'cli') {
+    die("skai_validate.php must be run from the command line.\n");
+}
+
+// Define the Joomla access guard so standalone functions that reference it
+// do not produce a fatal error.  This is a CLI-only test stub.
+defined('_JEXEC') or define('_JEXEC', 1);
 
 // ---------------------------------------------------------------------------
 // Minimal stubs so SKAI functions can be exercised without Joomla / DB.
@@ -65,13 +73,12 @@ if (!function_exists('SKAI_getTailRecoveryConfig')) {
     }
 }
 
-// Pull in the functions under test from skai_simpler.php via a safe extraction.
-// We only require the pure-PHP functions, not the full Joomla-boot top of file.
-// Since the file has a defined('_JEXEC') guard (which we satisfied above) but also
-// references Joomla classes in global scope, we extract only the function definitions
-// via eval of stripped function blocks.  For simplicity in this test harness we
-// redefine the functions under test inline with identical logic so the tests are
-// self-contained and repeatable without a web server.
+// ---------------------------------------------------------------------------
+// Inline re-implementations of the production functions under test.
+// All functions below mirror the logic in skai_simpler.php exactly.
+// They are redefined here (with _test suffixes) so the tests are fully
+// self-contained and repeatable without a web server or database.
+// ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
 // Inline re-implementations (identical logic to skai_simpler.php fixes).
@@ -171,6 +178,9 @@ function test_getHiddenLotteryIds($raw) {
 
 /**
  * Minimal combinationCount (mirrors SKAI2_combinationCount).
+ * Uses the multiplicative formula to avoid intermediate factorials.
+ * Safe for lottery-size inputs (n <= 100, k <= 10) on 64-bit PHP where
+ * PHP_INT_MAX = 9,223,372,036,854,775,807. For larger n/k, use bcmath.
  */
 function test_combinationCount($n, $k) {
     if ($k < 0 || $k > $n) { return 0; }
@@ -196,10 +206,10 @@ function test_harmonicNumber($n) {
  * Exact hypergeometric hit probability (mirrors SKAI2_calculateHitAtLeastOneProbability).
  */
 function test_hitAtLeastOne($poolSize, $pickSize, $topN) {
-    $numer = test_combinationCount($poolSize - $pickSize, $topN);
-    $denom = test_combinationCount($poolSize, $topN);
-    if ($denom <= 0) { return 0.0; }
-    return 1.0 - ($numer / $denom);
+    $numerator   = test_combinationCount($poolSize - $pickSize, $topN);
+    $denominator = test_combinationCount($poolSize, $topN);
+    if ($denominator <= 0) { return 0.0; }
+    return 1.0 - ($numerator / $denominator);
 }
 
 /**
@@ -246,9 +256,9 @@ function assert_equals($name, $actual, $expected, $tolerance = 0.0) {
     } else {
         $failed++;
         $errors[] = $name;
-        $a = is_array($actual) ? json_encode($actual) : var_export($actual, true);
-        $e = is_array($expected) ? json_encode($expected) : var_export($expected, true);
-        echo "  FAIL  $name\n        got=$a  want=$e\n";
+        $actualFormatted   = is_array($actual)   ? json_encode($actual)   : var_export($actual,   true);
+        $expectedFormatted = is_array($expected) ? json_encode($expected) : var_export($expected, true);
+        echo "  FAIL  $name\n        got=$actualFormatted  want=$expectedFormatted\n";
     }
 }
 
@@ -457,10 +467,12 @@ assert_true('cold number: smoothed pulled toward baseRate', abs($smoothedCold - 
 // Section 11: Math — Metropolis acceptance bounds
 // ===========================================================================
 echo "\n[Section 11] Metropolis-Hastings acceptance\n";
-// For deltaE > 0, exp(deltaE) > 1, and random [0,1) < exp(deltaE) is always true
-// PHP: for large positive deltaE, exp() returns INF, and comparison is still valid
+// For deltaE > 0, exp(deltaE) > 1, so any random value in [0,1) is less than it.
+// In PHP, exp(very_large_positive) evaluates to INF (not an error), and
+// any finite float is less than INF, so the acceptance condition is always true.
 $largePositive  = 1000.0;
-$acceptProb_pos = exp($largePositive); // INF
+// exp(1000) evaluates to INF in PHP; comparison float < INF is always true.
+$acceptProb_pos = exp($largePositive);
 $rand01         = 0.9999;
 assert_true('beneficial swap (deltaE>0) always accepted', $rand01 < $acceptProb_pos);
 // For deltaE = 0, exp(0) = 1.0, acceptance is near 1.0
