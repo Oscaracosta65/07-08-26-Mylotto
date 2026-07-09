@@ -110,8 +110,12 @@ if (!function_exists('mylottoexpertSetHiddenLotteryIds')) {
     {
         $userId = (int)$userId;
         if ($userId <= 0) { return false; }
-        $value = json_encode(mylottoexpertNormalizeLotteryIdList($ids));
-        $stored = json_encode((string)$value);
+        // [[FIX_HIDDEN_LOTTERY_JSON]] Previously this double-encoded the value:
+        //   $value  = json_encode([1,2,3])         => "[1,2,3]"
+        //   $stored = json_encode((string)$value)  => "\"[1,2,3]\""  (JSON string wrapping a JSON array)
+        // The getter handled both formats via an is_string($decoded) branch, but double-encoding
+        // is wasteful and confusing. Store the raw JSON array directly.
+        $stored = json_encode(mylottoexpertNormalizeLotteryIdList($ids));
         $existsQ = $db->getQuery(true)
             ->select('COUNT(*)')
             ->from($db->quoteName('#__user_profiles'))
@@ -6162,19 +6166,32 @@ function SKAI_getActiveCalibration($gameId) {
 }
 
 /**
- * Get domain (min/max numbers) for a game
- * Helper function to determine number range
- * 
+ * Get domain (min/max numbers) for a game.
+ * Loads the canonical game rules via SKAI2_getGameRules() and returns the
+ * main-ball pool min/max. Falls back to [1, 70] only when no game spec is
+ * available so that existing callers never receive an empty domain.
+ *
  * @param string $gameId  Game identifier
  * @return array          {min, max}
  */
 function SKAI_getDomain($gameId) {
-    // This should be loaded from config; default to common range
-    // TODO: Load from lottery_skip_config.json or database
-    return [
-        'min' => 1,
-        'max' => 70 // Common for many lotteries
-    ];
+    // [[FIX_SKAI_DOMAIN]] Replaced hardcoded max=70 with game-specific pool bounds.
+    // Previous version returned min=1,max=70 for every game, causing incorrect
+    // calibration ranges for games with different number pools (e.g. Pick3, EuroMillions).
+    if (function_exists('SKAI2_getGameRules') && (string)$gameId !== '') {
+        try {
+            $rules = SKAI2_getGameRules((string)$gameId);
+            $min   = isset($rules['main_pool_min']) ? (int)$rules['main_pool_min'] : 1;
+            $max   = isset($rules['main_pool_max']) ? (int)$rules['main_pool_max'] : 0;
+            if ($max > 0 && $max >= $min) {
+                return ['min' => $min, 'max' => $max];
+            }
+        } catch (\Throwable $e) {
+            error_log('[SKAI_getDomain] Failed to load game rules for gameId=' . (string)$gameId . ': ' . $e->getMessage());
+        }
+    }
+    // Safe fallback: use 70-ball range (covers Powerball main pool)
+    return ['min' => 1, 'max' => 70];
 }
 
 /**
@@ -6320,61 +6337,71 @@ function SKAI_buildPairwiseStats($gameId, $trainWindow, $ballType = 'main', $dom
 function SKAI_storePairwiseStats($gameId, $stats, $ballType, $windowSize) {
     try {
         $db = Factory::getDbo();
-        
+
         // Clear old stats for this game/ball type
         $query = $db->getQuery(true);
         $query->delete($db->quoteName('#__skai_pairwise_stats'))
-            ->where($db->quoteName('game_id') . ' = ' . $db->quote($gameId))
-            ->where($db->quoteName('ball_type') . ' = ' . $db->quote($ballType));
+            ->where($db->quoteName('game_id')   . ' = ' . $db->quote($gameId))
+            ->where($db->quoteName('ball_type')  . ' = ' . $db->quote($ballType));
         $db->setQuery($query);
         $db->execute();
-        
-        // Insert new stats
-        $now = new Date('now');
-        $inserted = 0;
-        
-        foreach ($stats as $stat) {
-            $query = $db->getQuery(true);
-            
-            $columns = [
-                'game_id',
-                'ball_type',
-                'computed_at',
-                'window_size',
-                'num_i',
-                'num_j',
-                'p_i',
-                'p_j',
-                'p_ij',
-                'lift',
-                'created_at'
-            ];
-            
-            $values = [
-                $db->quote($gameId),
-                $db->quote($ballType),
-                $db->quote($now->toSql()),
-                (int)$windowSize,
-                (int)$stat['num_i'],
-                (int)$stat['num_j'],
-                (float)$stat['p_i'],
-                (float)$stat['p_j'],
-                (float)$stat['p_ij'],
-                (float)$stat['lift'],
-                $db->quote($now->toSql())
-            ];
-            
-            $query->insert($db->quoteName('#__skai_pairwise_stats'))
-                ->columns($db->quoteName($columns))
-                ->values(implode(',', $values));
-            
-            $db->setQuery($query);
-            $db->execute();
-            $inserted++;
+
+        if (empty($stats)) {
+            return 0;
         }
-        
+
+        // [[FIX_PAIRWISE_BATCH]] Previously each pair was inserted in its own
+        // round-trip (N+1 queries for up to ~2400 pairs on a 70-ball game).
+        // Now all rows are inserted in a single multi-row INSERT batched at
+        // SKAI_PAIRWISE_INSERT_BATCH_SIZE rows per statement to stay within
+        // max_allowed_packet limits.
+        $batchSize = defined('SKAI_PAIRWISE_INSERT_BATCH_SIZE') ? (int)SKAI_PAIRWISE_INSERT_BATCH_SIZE : 200;
+        $batchSize = max(1, $batchSize);
+
+        $now     = new Date('now');
+        $nowSql  = $db->quote($now->toSql());
+        $gameQ   = $db->quote($gameId);
+        $typeQ   = $db->quote($ballType);
+        $winSz   = (int)$windowSize;
+
+        $columns = $db->quoteName([
+            'game_id', 'ball_type', 'computed_at', 'window_size',
+            'num_i', 'num_j', 'p_i', 'p_j', 'p_ij', 'lift', 'created_at'
+        ]);
+
+        $inserted = 0;
+        $chunks   = array_chunk($stats, $batchSize);
+
+        foreach ($chunks as $chunk) {
+            $valueRows = [];
+            foreach ($chunk as $stat) {
+                $valueRows[] = implode(',', [
+                    $gameQ,
+                    $typeQ,
+                    $nowSql,
+                    $winSz,
+                    (int)$stat['num_i'],
+                    (int)$stat['num_j'],
+                    (float)$stat['p_i'],
+                    (float)$stat['p_j'],
+                    (float)$stat['p_ij'],
+                    (float)$stat['lift'],
+                    $nowSql,
+                ]);
+            }
+            $q = $db->getQuery(true);
+            $q->insert($db->quoteName('#__skai_pairwise_stats'))
+              ->columns($columns);
+            foreach ($valueRows as $row) {
+                $q->values($row);
+            }
+            $db->setQuery($q);
+            $db->execute();
+            $inserted += count($chunk);
+        }
+
         return $inserted;
-        
+
     } catch (\Exception $e) {
         error_log('[SKAI] storePairwiseStats error: ' . $e->getMessage());
         return 0;
@@ -6732,47 +6759,75 @@ function SKAI_calculateConstraintDelta($currentSet, $removeNum, $addNum, $constr
 }
 
 /**
- * Re-rank candidates by Gibbs marginal probabilities
- * 
+ * Re-rank candidates by Gibbs marginal probabilities.
+ *
+ * Numbers that appear in $marginals have their score_total replaced with
+ * their Gibbs marginal (probability of inclusion in the optimal set).
+ * Numbers that were never sampled (marginal = 0) retain their pre-Gibbs
+ * score_total so they are not all collapsed to a tied score of 0.0.
+ *
  * @param array $candidates  Original candidates
  * @param array $marginals   Marginal probabilities: {num => prob}
  * @return array             Re-ranked candidates
  */
 function SKAI_rerankByMarginals($candidates, $marginals) {
+    // [[FIX_SKAI_RERANK]] Previously score_total was always replaced with
+    // gibbs_marginal (defaulting to 0.0 for unsampled numbers), collapsing
+    // all unsampled candidates to a tied score of 0. Now unsampled numbers
+    // keep their pre-Gibbs score_total so the tie does not destroy ordering.
     foreach ($candidates as &$candidate) {
         $num = $candidate['num'];
-        $candidate['gibbs_marginal'] = $marginals[$num] ?? 0.0;
-        
-        // Update score to use marginal as primary ranking
-        $candidate['score_total'] = $candidate['gibbs_marginal'];
+        $marginal = isset($marginals[$num]) ? (float)$marginals[$num] : null;
+        $candidate['gibbs_marginal'] = ($marginal !== null) ? $marginal : 0.0;
+
+        if ($marginal !== null) {
+            // This number was sampled: use Gibbs marginal as primary score.
+            $candidate['score_total'] = $marginal;
+        }
+        // Else: unsampled number — keep existing score_total for stable tie-breaking.
     }
-    
+    unset($candidate);
+
     usort($candidates, function($a, $b) {
-        return ($b['gibbs_marginal'] ?? 0.0) <=> ($a['gibbs_marginal'] ?? 0.0);
+        $ma = $a['gibbs_marginal'] ?? 0.0;
+        $mb = $b['gibbs_marginal'] ?? 0.0;
+        if (abs($ma - $mb) > 1e-12) {
+            return ($mb > $ma) ? 1 : -1; // descending by marginal
+        }
+        // Tie-break: descending by pre-Gibbs score_total
+        return ($b['score_total'] ?? 0.0) <=> ($a['score_total'] ?? 0.0);
     });
-    
+
     return $candidates;
 }
 
 /**
- * Log Gibbs sampling diagnostics
+ * Log Gibbs sampling diagnostics.
+ * Gated by [[SKAI_TAIL_DEBUG_LOGGING]]: only writes to error_log when
+ * debug logging is enabled. In production (default off) this is a no-op.
  */
 function SKAI_logGibbsDiagnostics($marginals, $numIterations, $burnIn) {
+    // [[FIX_GIBBS_DIAG_LOG]] Previously always called error_log(), spamming
+    // production logs on every Gibbs run. Now gated behind debug_logging config.
     try {
-        $numNonZero = count(array_filter($marginals, function($p) { return $p > 0; }));
+        $cfg = (function_exists('SKAI_getTailRecoveryConfig')) ? SKAI_getTailRecoveryConfig() : [];
+        if (empty($cfg['debug_logging'])) {
+            return;
+        }
+        $numNonZero  = count(array_filter($marginals, function($p) { return $p > 0; }));
         $maxMarginal = !empty($marginals) ? max($marginals) : 0.0;
         $minMarginal = !empty($marginals) ? min(array_filter($marginals, function($p) { return $p > 0; })) : 0.0;
-        
+
         $diagnostics = [
-            'num_iterations' => $numIterations,
-            'burn_in' => $burnIn,
-            'num_nonzero_marginals' => $numNonZero,
-            'max_marginal' => $maxMarginal,
-            'min_marginal' => $minMarginal
+            'num_iterations'         => $numIterations,
+            'burn_in'                => $burnIn,
+            'num_nonzero_marginals'  => $numNonZero,
+            'max_marginal'           => $maxMarginal,
+            'min_marginal'           => $minMarginal,
         ];
-        
+
         error_log('[SKAI] Gibbs diagnostics: ' . json_encode($diagnostics));
-        
+
     } catch (\Exception $e) {
         error_log('[SKAI] logGibbsDiagnostics error: ' . $e->getMessage());
     }
@@ -13952,16 +14007,24 @@ function SKAI_runLivePredictionPipeline(
                 'run_mode'               => '[[TAIL_RUNTIME_UPGRADED]]',
             ];
 
-            // Ensure score_total consistency: update score_total to reflect final tail_score
-            // where tail_score was computed (Section B requirement).
+            // [[FIX_SCORE_CONSISTENCY]] Ensure score_total is canonical after tail recovery.
+            // Previous condition `tail_score > 0.0` left borderline candidates with
+            // tail_score = 0.0 keeping their pre-tail score_total, while promoted candidates
+            // had score_total replaced with tail_score. This mixed pre-tail and post-tail
+            // values in the same list and caused $scoreRankOk to report false positives.
+            //
+            // Fix: update score_total for ALL candidates that have tail_score set (whether
+            // the score improved, stayed equal, or slightly decreased due to penalty
+            // relaxation). Candidates that were never in the rerank window (core and tail
+            // rest) have no tail_score set and their score_total is left unchanged.
             foreach ($rankedList as &$item) {
-                if (isset($item['tail_score']) && (float)$item['tail_score'] > 0.0) {
-                    // tail_score is additive on top of base; make score_total canonical final score
+                if (isset($item['tail_score'])) {
+                    // tail_score is the effective post-recovery score for this candidate.
                     $item['score_total'] = (float)$item['tail_score'];
                     if (!isset($item['score_parts']) || !is_array($item['score_parts'])) {
                         $item['score_parts'] = [];
                     }
-                    // tag that score_total now reflects post-recovery effective score
+                    // Tag that score_total now reflects post-recovery effective score.
                     $item['score_parts']['tail_score'] = (float)$item['tail_score'];
                 }
             }
