@@ -30054,7 +30054,7 @@ if (!function_exists('mylottoexpertBuildEvidenceReadinessStatus')) {
 
         $insufficientHistory = ($outcomeCount <= 0);
         $readinessScore = $insufficientHistory ? 0 : max(0, min(100, $rawScore));
-        $score = $insufficientHistory ? 0.0 : round($onePlusRate * 100.0, 2);
+        $score = $insufficientHistory ? 0.0 : (float)$rawScore;
         $scoreConfidenceLabel = 'Building confidence';
         if ($insufficientHistory) {
             $scoreConfidenceLabel = 'Insufficient history';
@@ -30114,7 +30114,7 @@ if (!function_exists('mylottoexpertBuildEvidenceReadinessStatus')) {
             }
         }
 
-        $scoreLine = 'Scientific Prediction History Score: ' . number_format($score, 2) . '% based on evaluated prediction rows with at least one main-number hit for this lottery/game/type card context. ' . $baselineDescription;
+        $scoreLine = 'Scientific Prediction History Score: ' . number_format($score, 2) . '% from evidence-weighted components (coverage, sample, effect/performance proxy, repeatability, stability, validation) for this lottery/game/type card context. ' . $baselineDescription;
         $componentLine = 'Components: coverage ' . $coverageComponent . '/25, sample ' . $sampleComponent . '/15, effect/performance proxy ' . $effectComponent . '/20, repeatability ' . $repeatComponent . '/15, stability ' . $stabilityComponent . '/15, validation proxy ' . $validationComponent . '/10.';
         $capLine = empty($capReasons) ? 'No major cap is currently limiting the status.' : implode(' ', array_unique($capReasons));
         $hiveLine = $scored > 0 ? ('Shared AI Learning history: ' . number_format($scored) . ' scored AI setting row' . ($scored === 1 ? '' : 's') . ' across ' . number_format($draws) . ' completed draw' . ($draws === 1 ? '' : 's') . ($users > 0 ? (' and ' . number_format($users) . ' user' . ($users === 1 ? '' : 's')) : '') . '. Outcome validation: ' . number_format($outcomeCount) . ' scored prediction' . ($outcomeCount === 1 ? '' : 's') . ' across ' . number_format($outcomeDrawCount) . ' independent draw date' . ($outcomeDrawCount === 1 ? '' : 's') . ', draw-level avg main hits ' . number_format($avgHits, 2) . ', row avg main hits ' . number_format($rowAvgHits, 2) . ', avg total hits ' . number_format($avgTotalHits, 2) . ', zero-main-hit rate ' . number_format($zeroRate * 100, 1) . '%, 3+ main-hit rate ' . number_format($threePlusRate * 100, 1) . '%.') : 'Shared AI Learning history: collecting scored AI prediction history for this lottery.';
@@ -30169,7 +30169,7 @@ if (!function_exists('mylottoexpertBuildEvidenceReadinessStatus')) {
             'personal_line'=>$personal,
             'coverage_score'=>$readinessScore,
             'scientific_score'=>$score,
-            'raw_score'=>$score,
+            'raw_score'=>$rawScore,
             'cap'=>$cap,
             'score_percent'=>$score,
             'evidence_count'=>$outcomeCount,
