@@ -1183,8 +1183,8 @@ try {
         $skaiV4LotteryId = skaiV7ResolveLotteryIdForDirectBatch($skaiV4Db, $in, $skaiV4LotteryId, $skaiV4GameId);
         $skaiV4LotteryName = trim((string)($lotteryName ?? ($currentLotteryName ?? ($lotteryConfig['name'] ?? ''))));
         if ($skaiV4LotteryName === '') { $skaiV4LotteryName = 'Lottery ID ' . (int)$skaiV4LotteryId; }
-        if ($skaiV4LotteryId <= 0 && $skaiV4GameId === '') {
-            $app->enqueueMessage('SKAI could not identify the current lottery for the regular 9-run batch.', 'error');
+        if ($skaiV4LotteryId <= 0) {
+            $app->enqueueMessage('SKAI could not resolve the lottery ID for the 9-run batch. Please select the lottery from the lottery selector and try again.', 'error');
             $app->redirect(\Joomla\CMS\Uri\Uri::getInstance()->toString());
             return;
         }
@@ -1272,8 +1272,8 @@ try {
         $skaiV5LotteryId = skaiV7ResolveLotteryIdForDirectBatch($skaiV5Db, $in, $skaiV5LotteryId, $skaiV5GameId);
         $skaiV5LotteryName = trim((string)($lotteryName ?? ($currentLotteryName ?? ($lotteryConfig['name'] ?? ''))));
         if ($skaiV5LotteryName === '') { $skaiV5LotteryName = 'Lottery ID ' . (int)$skaiV5LotteryId; }
-        if ($skaiV5LotteryId <= 0 && $skaiV5GameId === '') {
-            $app->enqueueMessage('SKAI could not identify the current lottery for the optional controlled narrowing test.', 'error');
+        if ($skaiV5LotteryId <= 0) {
+            $app->enqueueMessage('SKAI could not resolve the lottery ID for the optional narrowing batch. Please select the lottery from the lottery selector and try again.', 'error');
             $app->redirect(\Joomla\CMS\Uri\Uri::getInstance()->toString());
             return;
         }
